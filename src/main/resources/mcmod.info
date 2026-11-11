@@ -1,0 +1,9 @@
+[{
+  "modid": "smartsoup",
+  "name": "SmartSoup",
+  "description": "Consome Mushroom Stew da hotbar usando a mecanica normal de uso de item, dropa a tigela e volta ao slot anterior.",
+  "version": "${version}",
+  "mcversion": "${mcversion}",
+  "authorList": [],
+  "credits": ""
+}]
