@@ -11,6 +11,7 @@ public class SmartSoupConfig {
     public static boolean enabled = true;
     public static float healthThreshold = 13.0F; // HP restante que dispara o consumo
     public static boolean dropBowl = true;       // dropar a tigela vazia apos beber
+    public static boolean debug = false;         // mostra no chat o que o mod esta fazendo
 
     private static Configuration cfg;
 
@@ -24,6 +25,7 @@ public class SmartSoupConfig {
         healthThreshold = (float) cfg.getFloat("healthThreshold", CAT, 13.0F, 1.0F, 20.0F,
                 "Consome sopa quando a vida for menor ou igual a este valor (HP; 13 = 3,5 coracoes perdidos).");
         dropBowl = cfg.getBoolean("dropBowl", CAT, true, "Dropa a tigela vazia depois de beber a sopa.");
+        debug = cfg.getBoolean("debug", CAT, false, "Mostra mensagens de diagnostico no chat (para investigar problemas).");
         if (cfg.hasChanged()) cfg.save();
     }
 

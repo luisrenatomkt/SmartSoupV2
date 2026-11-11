@@ -15,9 +15,10 @@ O jar fica em `build/libs/SmartSoup-1.0.0.jar`.
 1. Instale o Minecraft Forge 1.8.9 (11.15.1.2318).
 2. Copie o jar para `.minecraft/mods`.
 3. Tecla **P** liga/desliga (mude em Controles > SmartSoup). Config em `config/smartsoup.cfg`
-   (`healthThreshold` = 13, `dropBowl` = true).
+   (`healthThreshold` = 13, `dropBowl` = true, `debug` = false). Com `debug=true` o mod mostra no chat o que esta fazendo.
 
 ## Como funciona
+Enquanto a vida estiver <= 13 e houver sopa na hotbar, ele continua bebendo (uma por vez, esperando a vida atualizar).
 Seleciona o slot da sopa, segura o botao direito (uso real do item, o Minecraft chama
 `PlayerControllerMP.sendUseItem`), espera o stack deixar de ser sopa, solta o botao, dropa a tigela
 com `EntityPlayerSP.dropOneItem(false)` (mesmo pacote da tecla Q) e volta ao slot registrado.
