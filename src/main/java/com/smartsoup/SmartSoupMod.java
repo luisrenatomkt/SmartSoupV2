@@ -39,10 +39,12 @@ public class SmartSoupMod {
     public void onKey(InputEvent.KeyInputEvent e) {
         // isPressed() consome o clique, entao so dispara uma vez por toque
         while (toggleKey.isPressed()) {
+            Minecraft mc = Minecraft.getMinecraft();
+            // Ignora a tecla P digitada no chat, inventario ou qualquer tela (evita desligar sozinho)
+            if (mc.currentScreen != null) continue;
             boolean now = !SmartSoupConfig.enabled;
             SmartSoupConfig.setEnabled(now);
             if (!now) controller.reset(); // desativado: nao deixa consumo em andamento
-            Minecraft mc = Minecraft.getMinecraft();
             if (mc.thePlayer != null) {
                 mc.thePlayer.addChatMessage(new ChatComponentText(
                         "[SmartSoup] " + (now ? "ATIVADO" : "DESATIVADO")));

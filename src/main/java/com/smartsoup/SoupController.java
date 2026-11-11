@@ -11,15 +11,22 @@ import net.minecraft.item.ItemStack;
  *
  * IDLE     -> espera vida <= limite, armado, com sopa na hotbar.
  * SELECT   -> slot da sopa selecionado; espera 1 tick para o Minecraft sincronizar o slot com o servidor.
- * USING    -> mantem o botao direito pressionado (uso real do item) ate o stack deixar de ser sopa.
+ * USING    -> mantem o botao direito pressionado (uso real do item) ate a sopa virar tigela.
  * DROPPING -> solta o botao, dropa a tigela (mesmo caminho da tecla Q) e espera o servidor processar.
  * RETURN   -> volta ao slot registrado antes da acao.
+ *
+ * Interrupcoes (abrir inventario/chat, trocar de slot, soltar o botao, mover a sopa durante o recraft)
+ * NAO deixam o mod travado: o slot e restaurado e o mod rearma para tentar de novo depois de um
+ * pequeno intervalo.
  */
 public class SoupController {
     private enum State { IDLE, SELECT, USING, DROPPING, RETURN }
 
-    private static final int USE_TIMEOUT_TICKS = 80;   // sopa vanilla leva 32 ticks
+    private static final int USE_TIMEOUT_TICKS = 80;     // sopa vanilla leva 32 ticks
     private static final int DROP_WAIT_TICKS = 2;
+    private static final int RETRY_COOLDOWN_TICKS = 10;  // pausa apos interrupcao (nao e falha do servidor)
+    private static final int FAIL_COOLDOWN_TICKS = 20;   // pausa apos timeout
+    private static final int MAX_FAILS = 2;              // timeouts seguidos antes de esperar a vida subir
 
     private final Minecraft mc = Minecraft.getMinecraft();
 
@@ -28,21 +35,28 @@ public class SoupController {
     private int previousSlot = -1;
     private int soupSlot = -1;
     private int ticks = 0;
+    private int cooldown = 0;
+    private int failures = 0;
     private boolean keyHeld = false;
 
     public void tick() {
         EntityPlayerSP p = mc.thePlayer;
         if (p == null || mc.theWorld == null || p.isDead || p.getHealth() <= 0.0F) {
-            if (state != State.IDLE || !armed) reset();
+            if (state != State.IDLE || !armed || keyHeld || cooldown != 0) reset();
             return;
         }
 
+        if (cooldown > 0) cooldown--;
+
         // Rearma quando a vida passa do limite
-        if (p.getHealth() > SmartSoupConfig.healthThreshold) armed = true;
+        if (p.getHealth() > SmartSoupConfig.healthThreshold) {
+            armed = true;
+            failures = 0;
+        }
 
         switch (state) {
             case IDLE:
-                if (!SmartSoupConfig.enabled || !armed) return;
+                if (!SmartSoupConfig.enabled || !armed || cooldown > 0) return;
                 if (p.getHealth() > SmartSoupConfig.healthThreshold) return;
                 if (mc.currentScreen != null || p.isUsingItem()) return;
                 int slot = findSoupInHotbar(p);
@@ -56,32 +70,37 @@ public class SoupController {
                 break;
 
             case SELECT:
-                if (p.inventory.currentItem != soupSlot || !isSoup(p.inventory.getStackInSlot(soupSlot))) {
-                    abort(false);
+                if (mc.currentScreen != null
+                        || p.inventory.currentItem != soupSlot
+                        || !isSoup(p.inventory.getStackInSlot(soupSlot))) {
+                    interrupt(p);
                     return;
                 }
-                if (++ticks >= 1) {
-                    setUseKey(true); // uso real do item: o Minecraft chama PlayerControllerMP.sendUseItem
-                    ticks = 0;
-                    state = State.USING;
-                }
+                setUseKey(true); // uso real do item: o Minecraft chama PlayerControllerMP.sendUseItem
+                ticks = 0;
+                state = State.USING;
                 break;
 
             case USING:
-                // Jogador mudou de slot manualmente: cancela sem mexer no slot
-                if (p.inventory.currentItem != soupSlot) {
-                    abort(false);
+                // Inventario/chat aberto, slot trocado, ou botao solto por fora (o Minecraft solta
+                // todas as teclas ao abrir uma tela): interrompe com seguranca e tenta de novo depois.
+                if (mc.currentScreen != null
+                        || p.inventory.currentItem != soupSlot
+                        || (keyHeld && !mc.gameSettings.keyBindUseItem.isKeyDown())) {
+                    interrupt(p);
                     return;
                 }
                 ItemStack held = p.inventory.getStackInSlot(soupSlot);
-                if (!isSoup(held)) { // consumo concluido: virou tigela (ou vazio)
+                if (isSoup(held)) {
+                    if (++ticks > USE_TIMEOUT_TICKS) timeout(p); // servidor bloqueou / fome cheia no vanilla
+                } else if (held == null || held.getItem() == Items.bowl) {
+                    // consumo concluido: virou tigela (ou o servidor removeu o item)
                     setUseKey(false);
+                    failures = 0;
                     ticks = 0;
                     state = State.DROPPING;
-                    break;
-                }
-                if (++ticks > USE_TIMEOUT_TICKS) { // falhou (ex.: servidor bloqueou, fome cheia no vanilla)
-                    abort(true);
+                } else {
+                    interrupt(p); // outro item entrou no slot (recraft/movimentacao do jogador)
                 }
                 break;
 
@@ -111,18 +130,38 @@ public class SoupController {
         previousSlot = -1;
         soupSlot = -1;
         ticks = 0;
+        cooldown = 0;
+        failures = 0;
     }
 
-    private void abort(boolean restoreSlot) {
+    /** Consumo interrompido por algo externo: solta o botao, volta ao slot e rearma com pausa curta. */
+    private void interrupt(EntityPlayerSP p) {
         setUseKey(false);
-        EntityPlayerSP p = mc.thePlayer;
-        if (restoreSlot && p != null) restoreSlot(p);
+        restoreSlot(p);
         state = State.IDLE;
         ticks = 0;
+        armed = true;
+        cooldown = RETRY_COOLDOWN_TICKS;
     }
 
+    /** Consumo nao terminou a tempo. Tenta de novo no maximo MAX_FAILS vezes seguidas. */
+    private void timeout(EntityPlayerSP p) {
+        setUseKey(false);
+        restoreSlot(p);
+        state = State.IDLE;
+        ticks = 0;
+        failures++;
+        if (failures < MAX_FAILS) {
+            armed = true;
+            cooldown = FAIL_COOLDOWN_TICKS;
+        } // senao fica desarmado ate a vida passar do limite
+    }
+
+    /** So volta ao slot anterior se o jogador ainda estiver no slot da sopa (nao sobrescreve troca manual). */
     private void restoreSlot(EntityPlayerSP p) {
-        if (previousSlot >= 0 && previousSlot <= 8) p.inventory.currentItem = previousSlot;
+        if (previousSlot >= 0 && previousSlot <= 8 && p.inventory.currentItem == soupSlot) {
+            p.inventory.currentItem = previousSlot;
+        }
         previousSlot = -1;
         soupSlot = -1;
     }
@@ -140,7 +179,7 @@ public class SoupController {
     }
 
     private void setUseKey(boolean down) {
-        if (keyHeld == down) return;
+        // sem "early return": o Minecraft pode ter soltado a tecla por conta propria (ex.: ao abrir o inventario)
         KeyBinding.setKeyBindState(mc.gameSettings.keyBindUseItem.getKeyCode(), down);
         keyHeld = down;
     }
